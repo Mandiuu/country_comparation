@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Senegal Disaster Events Map</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"/>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <!-- PapaParse for CSV parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+        }
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        #map {
+            height: 600px;
+            width: 100%;
+        }
+        .chart-container {
+            height: 300px;
+            margin-bottom: 20px;
+        }
+        .disaster-type-pill {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            cursor: pointer;
+        }
+        .stats-box {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .filter-group {
+            margin-bottom: 15px;
+        }
+        .legend {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+        }
+        .legend-item {
+            margin-bottom: 5px;
+        }
+        .legend-color {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            margin-right: 5px;
+            border-radius: 50%;
+        }
+        .file-upload-container {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Senegal Disaster Events Visualization</h1>
+        
+        <div class="file-upload-container card">
+            <div class="card-body">
+                <h5 class="card-title">Upload Disaster Data</h5>
+                <p class="card-text">Select your CSV file with disaster data:</p>
+                <input type="file" id="csv-file" class="form-control" accept=".csv">
+                <small class="text-muted">CSV should include columns for location, disaster type, dates, and impact numbers.</small>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Filters</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="filter-group">
+                            <label class="form-label">Disaster Type</label>
+                            <div id="disaster-type-filters">
+                                <!-- Dynamically populated -->
+                            </div>
+                        </div>
+                        
+                        <div class="filter-group">
+                            <label class="form-label">Year Range</label>
+                            <div class="d-flex">
+                                <select id="start-year" class="form-select me-2">
+                                    <!-- Dynamically populated -->
+                                </select>
+                                <select id="end-year" class="form-select">
+                                    <!-- Dynamically populated -->
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <button id="reset-filters" class="btn btn-secondary mt-3 w-100">Reset Filters</button>
+                    </div>
+                </div>
+                
+                <div class="stats-box">
+                    <h5>Summary Statistics</h5>
+                    <div id="stats-summary">
+                        <p>Upload data to see statistics</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-9">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Geographic Distribution of Disasters</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="map"></div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Disaster Events Timeline</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="timeline-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Most Affected Locations</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="location-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let map = null;
+        let markers = [];
+        let disasterData = [];
+        let timelineChart = null;
+        let locationChart = null;
+        let activeFilters = {
+            disasterTypes: [],
+            startYear: 2000,
+            endYear: 2025
+        };
+        
+        // Senegal city coordinates
+        const cityCoordinates = {
+            "Dakar": [14.6937, -17.4441],
+            "Touba": [14.8744, -15.8838],
+            "Thies": [14.7894, -16.9312],
+            "Thiès": [14.7894, -16.9312],
+            "Kaolack": [14.1652, -16.0726],
+            "Mbour": [14.4166, -16.9666],
+            "Ziguinchor": [12.5598, -16.2719],
+            "Diourbel": [14.6583, -16.2322],
+            "Louga": [15.6175, -16.2419],
+            "Saint-Louis": [16.0326, -16.4818],
+            "Rufisque": [14.7167, -17.2667],
+            "Tivaouane": [14.9500, -16.8167],
+            "Mbacke": [14.7903, -15.9078],
+            "Mbacké": [14.7903, -15.9078],
+            "Kolda": [12.9086, -14.9406],
+            "Pikine": [14.7648, -17.3907],
+            "Guediawaye": [14.7687, -17.3983],
+            "Guédiawaye": [14.7687, -17.3983],
+            "Tambacounda": [13.7743, -13.6773],
+            "Bargny": [14.6927, -17.2245],
+            "Fatick": [14.3390, -16.4154],
+            "Kaffrine": [14.1058, -15.5423],
+            "Matam": [15.6559, -13.2548],
+            "Kebemer": [15.3703, -16.4422],
+            "Kébémer": [15.3703, -16.4422],
+            "Velingara": [13.1458, -14.1203],
+            "Sedhiou": [12.7044, -15.5569],
+            "Sédhiou": [12.7044, -15.5569],
+            "Richard-Toll": [16.4625, -15.7007],
+            "Podor": [16.6598, -14.9594],
+            "Bakel": [14.9017, -12.4570],
+            "Bambey": [14.6900, -16.4500],
+            "Kedougou": [12.5565, -12.1747],
+            "Kédougou": [12.5565, -12.1747],
+            "Yeumbeul": [14.7833, -17.3667],
+            "Mboro": [15.1333, -16.8833],
+            "Dakar City and the Cap–Vert Peninsula": [14.7272, -17.3857],
+            "Northern": [15.5000, -15.5000],
+            "Dagana": [16.5089, -15.5069],
+            "Kanel": [15.4903, -13.1903],
+            "Linguere": [15.3953, -15.1186],
+            "Nioro du rip": [13.7440, -15.7757],
+            "Goudomp": [12.5338, -15.9439],
+            "Mbane": [16.3576, -15.8084],
+            "Gaya": [16.2450, -15.8300],
+            "Gnith": [16.1827, -15.9349],
+            "Bokhol": [16.5226, -15.7881],
+            "Ronkh": [16.5133, -15.8199],
+            "Colobane": [14.6763, -17.4566],
+            "Darou Mousty": [15.1019, -16.0536],
+            "Thiaroye": [14.7324, -17.3847],
+            "Diaoulé village": [13.5856, -15.8414],
+            "Médina Gounass": [12.9325, -13.5041],
+            "SENEGAL": [14.4974, -14.4524],
+            "UNKNOWN": [14.4974, -14.4524]
+        };
+        
+        // Color mapping for disaster types
+        const disasterColors = {
+            "Flood": "#3288bd",
+            "Drought": "#d53e4f",
+            "Epidemic": "#66c2a5",
+            "Storm": "#fee08b",
+            "Infestation": "#e6ab02",
+            "DEFAULT": "#999999"
+        };
+        
+        // Initialize map
+        function initMap() {
+            // Create map centered on Senegal
+            map = L.map('map').setView([14.4974, -14.4524], 7);
+            
+            // Add OpenStreetMap tiles
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+            
+            // Add legend
+            addLegend();
+        }
+        
+        // Add map legend
+        function addLegend() {
+            const legend = L.control({ position: 'bottomright' });
+            
+            legend.onAdd = function (map) {
+                const div = L.DomUtil.create('div', 'legend');
+                div.innerHTML = '<h6>Disaster Types</h6>';
+                
+                Object.entries(disasterColors).forEach(([type, color]) => {
+                    if (type !== 'DEFAULT') {
+                        div.innerHTML += `
+                            <div class="legend-item">
+                                <span class="legend-color" style="background-color: ${color}"></span>
+                                ${type}
+                            </div>
+                        `;
+                    }
+                });
+                
+                return div;
+            };
+            
+            legend.addTo(map);
+        }
+        
+        // Process the disaster data from CSV
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            
+            if (file) {
+                Papa.parse(file, {
+                    header: true,
+                    dynamicTyping: true,
+                    skipEmptyLines: true,
+                    complete: function(results) {
+                        console.log("Parsed CSV data:", results);
+                        processData(results.data);
+                    },
+                    error: function(error) {
+                        console.error("Error parsing CSV:", error);
+                        alert("Error parsing CSV file. Check console for details.");
+                    }
+                });
+            }
+        }
+        
+        // Process the disaster data
+        function processData(data) {
+            disasterData = data.map((item, index) => {
+                // Extract disaster type (main category)
+                const disasterType = item['Disaster Type'] || '';
+                
+                // Get start and end years
+                const startYear = parseInt(item['Start Year']) || 0;
+                const endYear = parseInt(item['End Year']) || startYear;
+                
+                // Get affected population
+                const totalAffected = parseInt(item['Total Affected']) || 0;
+                
+                // Get deaths
+                const totalDeaths = parseInt(item['Total Deaths']) || 0;
+                
+                return {
+                    id: item.DisNo || `disaster-${index}`,
+                    location: item['Normalized Location'] || item['Location'] || 'Unknown',
+                    disasterGroup: item['Disaster Group'] || '',
+                    disasterType: disasterType,
+                    disasterSubType: item['Disaster Subtype'] || '',
+                    startYear: startYear,
+                    startMonth: parseInt(item['Start Month']) || 1,
+                    endYear: endYear,
+                    endMonth: parseInt(item['End Month']) || 12,
+                    totalAffected: totalAffected,
+                    totalDeaths: totalDeaths,
+                    origin: item['Origin'] || '',
+                    eventName: item['Event Name'] || ''
+                };
+            });
+            
+            // Filter out empty or invalid entries
+            disasterData = disasterData.filter(item => 
+                item.location && 
+                item.location !== 'Unknown' && 
+                item.startYear > 0
+            );
+            
+            // Initialize filters with available data
+            initializeFilters();
+            
+            // Update visualizations
+            updateMap();
+            updateTimeline();
+            updateLocationChart();
+            updateStats();
+        }
+        
+        // Initialize filters
+        function initializeFilters() {
+            // Get unique disaster types
+            const disasterTypes = [...new Set(disasterData.map(item => item.disasterType))].filter(Boolean).sort();
+            
+            // Get year range
+            const years = disasterData.map(item => item.startYear).filter(Boolean);
+            const minYear = Math.min(...years);
+            const maxYear = Math.max(...years);
+            
+            activeFilters.startYear = minYear;
+            activeFilters.endYear = maxYear;
+            
+            // Populate disaster type filters
+            // Populate disaster type filters
+            const filtersContainer = document.getElementById('disaster-type-filters');
+            filtersContainer.innerHTML = '';
+            
+            disasterTypes.forEach(type => {
+                const baseType = type.split(' ')[0]; // Get first word as base type
+                const color = disasterColors[baseType] || disasterColors.DEFAULT;
+                
+                const pill = document.createElement('span');
+                pill.className = 'disaster-type-pill';
+                pill.textContent = type;
+                pill.style.backgroundColor = color;
+                pill.style.color = getContrastColor(color);
+                pill.dataset.type = type;
+                pill.addEventListener('click', toggleDisasterTypeFilter);
+                
+                filtersContainer.appendChild(pill);
+            });
+            
+            // Populate year selects
+            const startYearSelect = document.getElementById('start-year');
+            const endYearSelect = document.getElementById('end-year');
+            
+            startYearSelect.innerHTML = '';
+            endYearSelect.innerHTML = '';
+            
+            for (let year = minYear; year <= maxYear; year++) {
+                const startOption = document.createElement('option');
+                startOption.value = year;
+                startOption.textContent = year;
+                startYearSelect.appendChild(startOption);
+
+                const endOption = document.createElement('option');
+                endOption.value = year;
+                endOption.textContent = year;
+                endYearSelect.appendChild(endOption);
+            }
+            
+            startYearSelect.value = minYear;
+            endYearSelect.value = maxYear;
+            
+            // Add event listeners for year filters
+            startYearSelect.addEventListener('change', updateYearFilter);
+            endYearSelect.addEventListener('change', updateYearFilter);
+            
+            // Add reset button event listener
+            document.getElementById('reset-filters').addEventListener('click', resetFilters);
+        }
+        
+        // Toggle disaster type filter
+        function toggleDisasterTypeFilter(event) {
+            const type = event.target.dataset.type;
+            const index = activeFilters.disasterTypes.indexOf(type);
+            
+            if (index === -1) {
+                // Add filter
+                activeFilters.disasterTypes.push(type);
+                event.target.style.opacity = '0.5';
+            } else {
+                // Remove filter
+                activeFilters.disasterTypes.splice(index, 1);
+                event.target.style.opacity = '1';
+            }
+            
+            // Update visualizations
+            updateMap();
+            updateTimeline();
+            updateLocationChart();
+            updateStats();
+        }
+        
+        // Update year filter
+        function updateYearFilter() {
+            const startYear = parseInt(document.getElementById('start-year').value);
+            const endYear = parseInt(document.getElementById('end-year').value);
+            
+            // Ensure start year is not after end year
+            if (startYear <= endYear) {
+                activeFilters.startYear = startYear;
+                activeFilters.endYear = endYear;
+                
+                // Update visualizations
+                updateMap();
+                updateTimeline();
+                updateLocationChart();
+                updateStats();
+            } else {
+                // Reset to previous values
+                document.getElementById('start-year').value = activeFilters.startYear;
+                document.getElementById('end-year').value = activeFilters.endYear;
+                
+                alert('Start year cannot be after end year');
+            }
+        }
+        
+        // Reset all filters
+        function resetFilters() {
+            // Reset disaster type filters
+            activeFilters.disasterTypes = [];
+            
+            const pills = document.querySelectorAll('.disaster-type-pill');
+            pills.forEach(pill => {
+                pill.style.opacity = '1';
+            });
+            
+            // Reset year filters
+            const years = disasterData.map(item => item.startYear).filter(Boolean);
+            const minYear = Math.min(...years);
+            const maxYear = Math.max(...years);
+            
+            activeFilters.startYear = minYear;
+            activeFilters.endYear = maxYear;
+            
+            document.getElementById('start-year').value = minYear;
+            document.getElementById('end-year').value = maxYear;
+            
+            // Update visualizations
+            updateMap();
+            updateTimeline();
+            updateLocationChart();
+            updateStats();
+        }
+        
+        // Filter data based on active filters
+        function filterData() {
+            return disasterData.filter(item => {
+                // Filter by disaster type
+                const typeMatch = activeFilters.disasterTypes.length === 0 || 
+                                activeFilters.disasterTypes.includes(item.disasterType);
+                
+                // Filter by year range
+                const yearMatch = item.startYear >= activeFilters.startYear && 
+                               item.startYear <= activeFilters.endYear;
+                
+                return typeMatch && yearMatch;
+            });
+        }
+        
+        // Update map with filtered data
+        function updateMap() {
+            // Clear existing markers
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+            
+            // Get filtered data
+            const filteredData = filterData();
+            
+            // Group data by location
+            const locationGroups = {};
+            
+            filteredData.forEach(item => {
+                const location = item.location;
+                
+                if (!locationGroups[location]) {
+                    locationGroups[location] = [];
+                }
+                
+                locationGroups[location].push(item);
+            });
+            
+            // Add markers for each location
+            Object.entries(locationGroups).forEach(([location, events]) => {
+                // Get coordinates or use default if not found
+                const normalizedLocation = location.replace(/\s+/g, ' ').trim();
+                const coordinates = cityCoordinates[normalizedLocation] || cityCoordinates['SENEGAL'];
+                
+                if (coordinates) {
+                    // Count events by disaster type
+                    const typeCounts = {};
+                    events.forEach(event => {
+                        const baseType = event.disasterType.split(' ')[0];
+                        typeCounts[baseType] = (typeCounts[baseType] || 0) + 1;
+                    });
+                    
+                    // Determine primary disaster type for this location
+                    let primaryType = 'DEFAULT';
+                    let maxCount = 0;
+                    
+                    Object.entries(typeCounts).forEach(([type, count]) => {
+                        if (count > maxCount) {
+                            maxCount = count;
+                            primaryType = type;
+                        }
+                    });
+                    
+                    // Marker size based on number of events
+                    const markerSize = Math.max(8, Math.min(20, 8 + (events.length / 2)));
+                    
+                    // Create marker
+                    const marker = L.circleMarker(coordinates, {
+                        radius: markerSize,
+                        fillColor: disasterColors[primaryType] || disasterColors.DEFAULT,
+                        color: '#fff',
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.7
+                    }).addTo(map);
+                    
+                    // Create popup content
+                    let popupContent = `<strong>${location}</strong><br>`;
+                    popupContent += `Total Events: ${events.length}<br><br>`;
+                    
+                    // Add disaster type breakdown
+                    popupContent += '<strong>Disaster Types:</strong><br>';
+                    Object.entries(typeCounts).sort((a, b) => b[1] - a[1]).forEach(([type, count]) => {
+                        popupContent += `${type}: ${count}<br>`;
+                    });
+                    
+                    popupContent += '<br><strong>Recent Events:</strong><br>';
+                    
+                    // Add recent events (max 5)
+                    const recentEvents = [...events].sort((a, b) => b.startYear - a.startYear).slice(0, 5);
+                    recentEvents.forEach(event => {
+                        popupContent += `${event.startYear}: ${event.disasterType}`;
+                        if (event.totalAffected) {
+                            popupContent += ` (${event.totalAffected.toLocaleString()} affected)`;
+                        }
+                        popupContent += '<br>';
+                    });
+                    
+                    // Add popup to marker
+                    marker.bindPopup(popupContent);
+                    
+                    markers.push(marker);
+                }
+            });
+            
+            // Fit map bounds if there are markers
+            if (markers.length > 0) {
+                const group = L.featureGroup(markers);
+                map.fitBounds(group.getBounds().pad(0.1));
+            }
+        }
+        
+        // Update timeline chart
+        function updateTimeline() {
+            // Get filtered data
+            const filteredData = filterData();
+            
+            // Count events by year and type
+            const yearData = {};
+            const disasterTypes = new Set();
+            
+            filteredData.forEach(item => {
+                const year = item.startYear;
+                const baseType = item.disasterType.split(' ')[0];
+                disasterTypes.add(baseType);
+                
+                if (!yearData[year]) {
+                    yearData[year] = {};
+                }
+                
+                yearData[year][baseType] = (yearData[year][baseType] || 0) + 1;
+            });
+            
+            // Sort years and prepare chart data
+            const years = Object.keys(yearData).sort((a, b) => parseInt(a) - parseInt(b));
+            const datasets = [];
+            
+            // Convert disaster types to sorted array
+            const typeArray = Array.from(disasterTypes).sort();
+            
+            // Create dataset for each disaster type
+            typeArray.forEach(type => {
+                const data = years.map(year => yearData[year][type] || 0);
+                
+                datasets.push({
+                    label: type,
+                    data: data,
+                    backgroundColor: disasterColors[type] || disasterColors.DEFAULT,
+                    borderColor: disasterColors[type] || disasterColors.DEFAULT,
+                    borderWidth: 1
+                });
+            });
+            
+            // Create or update chart
+            const ctx = document.getElementById('timeline-chart').getContext('2d');
+            
+            if (timelineChart) {
+                timelineChart.destroy();
+            }
+            
+            timelineChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: years,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            stacked: true,
+                            title: {
+                                display: true,
+                                text: 'Year'
+                            }
+                        },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Events'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Update location chart
+        function updateLocationChart() {
+            // Get filtered data
+            const filteredData = filterData();
+            
+            // Count events by location
+            const locationCounts = {};
+            
+            filteredData.forEach(item => {
+                const location = item.location;
+                locationCounts[location] = (locationCounts[location] || 0) + 1;
+            });
+            
+            // Sort and get top 10 locations
+            const sortedLocations = Object.entries(locationCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10);
+            
+            const labels = sortedLocations.map(item => item[0]);
+            const data = sortedLocations.map(item => item[1]);
+            
+            // Create or update chart
+            const ctx = document.getElementById('location-chart').getContext('2d');
+            
+            if (locationChart) {
+                locationChart.destroy();
+            }
+            
+            locationChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Number of Events',
+                        data: data,
+                        backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Events'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Update statistics summary
+        function updateStats() {
+            // Get filtered data
+            const filteredData = filterData();
+            
+            // Calculate statistics
+            const totalEvents = filteredData.length;
+            const uniqueLocations = new Set(filteredData.map(item => item.location)).size;
+            
+            // Count by disaster type
+            const typeCounts = {};
+            filteredData.forEach(item => {
+                const baseType = item.disasterType.split(' ')[0];
+                typeCounts[baseType] = (typeCounts[baseType] || 0) + 1;
+            });
+            
+            // Calculate total affected
+            const totalAffected = filteredData.reduce((sum, item) => sum + (item.totalAffected || 0), 0);
+            
+            // Calculate total deaths
+            const totalDeaths = filteredData.reduce((sum, item) => sum + (item.totalDeaths || 0), 0);
+            
+            // Update statistics container
+            const statsContainer = document.getElementById('stats-summary');
+            
+            let statsHTML = `
+                <p><strong>Total Events:</strong> ${totalEvents}</p>
+                <p><strong>Affected Locations:</strong> ${uniqueLocations}</p>
+                <p><strong>Total Affected Population:</strong> ${totalAffected.toLocaleString()}</p>
+            `;
+            
+            if (totalDeaths > 0) {
+                statsHTML += `<p><strong>Total Deaths:</strong> ${totalDeaths.toLocaleString()}</p>`;
+            }
+            
+            statsHTML += '<hr><strong>Events by Type:</strong><br>';
+            
+            // Add disaster type breakdown
+            Object.entries(typeCounts).sort((a, b) => b[1] - a[1]).forEach(([type, count]) => {
+                const percent = ((count / totalEvents) * 100).toFixed(1);
+                statsHTML += `${type}: ${count} (${percent}%)<br>`;
+            });
+            
+            statsContainer.innerHTML = statsHTML;
+        }
+        
+        // Helper function for contrast text color
+        function getContrastColor(hexColor) {
+            // Convert hex to RGB
+            const r = parseInt(hexColor.substr(1, 2), 16);
+            const g = parseInt(hexColor.substr(3, 2), 16);
+            const b = parseInt(hexColor.substr(5, 2), 16);
+            
+            // Calculate luminance
+            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+            
+            // Return black or white based on luminance
+            return luminance > 0.5 ? '#000' : '#fff';
+        }
+        
+        // Add event listener for file upload
+        document.getElementById('csv-file').addEventListener('change', handleFileUpload);
+        
+        // Initialize map when DOM is loaded
+        document.addEventListener('DOMContentLoaded', initMap);
+    </script>
+</body>
+</html>
